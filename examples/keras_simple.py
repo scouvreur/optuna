@@ -3,8 +3,7 @@ Optuna example that optimizes a neural network classifier configuration for the
 MNIST dataset using Keras.
 
 In this example, we optimize the validation accuracy of MNIST classification using
-Keras. We optimize the number of hidden units and layers, as well as the dropout
-factor.
+Keras. We optimize the filter and kernel size, kernel stride layer activation.
 
 We have following two ways to execute this example:
 
@@ -20,65 +19,61 @@ We have following two ways to execute this example:
 """
 
 import numpy as np
-import mnist
+import pandas as pd
+
+from sklearn.metrics import accuracy_score
+
+from keras.datasets import mnist
 from keras.models import Sequential
-from keras.layers import Dense
-from keras.utils import to_categorical
+from keras.layers import Activation, Flatten, Dense, Conv2D
+from keras.optimizers import Adam
 
 import optuna
 
-train_images = mnist.train_images()
-train_labels = mnist.train_labels()
-test_images = mnist.test_images()
-test_labels = mnist.test_labels()
+def objective(trial):
+    (x_train, y_train), (x_test, y_test) = mnist.load_data()
+    img_x, img_y = x_train.shape[1], x_train.shape[2]
+    x_train = x_train.reshape(-1, img_x, img_y, 1)
+    x_test = x_test.reshape(-1, img_x, img_y, 1)
+    num_classes = 10
+    input_shape = (img_x, img_y, 1)
 
-# Normalize the images.
-train_images = (train_images / 255) - 0.5
-test_images = (test_images / 255) - 0.5
+    model = Sequential()
+    model.add(Conv2D(
+        filters=trial.suggest_categorical('filters', [32, 64]),
+        kernel_size=trial.suggest_categorical('kernel_size', [3, 5]),
+        strides=trial.suggest_categorical('strides', [1, 2]),
+        activation=trial.suggest_categorical('activation', ['relu', 'linear']),
+        input_shape=input_shape))
+    model.add(Flatten())
+    model.add(Dense(num_classes, activation='softmax'))
+    model.compile(optimizer=Adam(),
+                  loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
-# Flatten the images.
-train_images = train_images.reshape((-1, 784))
-test_images = test_images.reshape((-1, 784))
+    model.fit(x_train, y_train,
+              validation_data=(x_test, y_test), shuffle=True,
+              batch_size=512, epochs=2,
+              verbose=False)
 
-# Build the model.
-model = Sequential([
-  Dense(64, activation='relu', input_shape=(784,)),
-  Dense(64, activation='relu'),
-  Dense(10, activation='softmax'),
-])
+    preds = model.predict(x_test)
+    pred_labels = np.argmax(preds, axis=1)
+    accuracy = accuracy_score(y_test, pred_labels)
+    return accuracy
 
-# Compile the model.
-model.compile(
-  optimizer='adam',
-  loss='categorical_crossentropy',
-  metrics=['accuracy'],
-)
 
-# Train the model.
-model.fit(
-  train_images,
-  to_categorical(train_labels),
-  epochs=5,
-  batch_size=32,
-)
+if __name__ == '__main__':
+    study = optuna.create_study(direction='maximize')
+    study.optimize(objective, n_trials=200, timeout= 200)
 
-# Evaluate the model.
-model.evaluate(
-  test_images,
-  to_categorical(test_labels)
-)
+    print('Number of finished trials: {}'.format(len(study.trials)))
 
-# Save the model to disk.
-model.save_weights('model.h5')
+    print('Best trial:')
+    trial = study.best_trial
 
-# Load the model from disk later using:
-# model.load_weights('model.h5')
+    print('  Value: {}'.format(trial.value))
 
-# Predict on the first 5 test images.
-predictions = model.predict(test_images[:5])
+    print('  Params: ')
+    for key, value in trial.params.items():
+        print('    {}: {}'.format(key, value))
 
-# Print our model's predictions.
-print(np.argmax(predictions, axis=1)) # [7, 2, 1, 0, 4]
 
-# Check our predictions against the ground truths.
-print(test_labels[:5]) # [7, 2, 1, 0, 4]
